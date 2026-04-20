@@ -54,13 +54,10 @@ export default function SchedulePage() {
   }
 
   function handleGenerate() {
-    console.log('handleGenerate called', { year, month, guardsCount: guards.length })
     const calendar = getCalendar(year)
     const holidays = calendar?.holidays ?? []
     const result = generateSchedule(year, month, guards, posts, holidays)
-    console.log('generated', result.updatedAt, 'days:', result.days.length)
     saveSchedule(result)
-    console.log('saved, key:', `schedule_${year}_${month}`)
     setSchedule(result)
   }
 
