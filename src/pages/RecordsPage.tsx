@@ -47,13 +47,13 @@ export default function RecordsPage({ onNavigateToSchedule }: Props) {
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-xl font-semibold text-gray-900">排班記錄</h2>
         <div className="flex gap-2">
-          <label className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg cursor-pointer transition">
+          <label className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg cursor-pointer transition">
             匯入備份
             <input type="file" accept=".json" className="hidden" onChange={handleImportBackup} />
           </label>
           <button
             onClick={handleExportBackup}
-            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg transition"
+            className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg transition"
           >
             匯出備份
           </button>
@@ -74,13 +74,13 @@ export default function RecordsPage({ onNavigateToSchedule }: Props) {
                 {s.year} 年 {MONTHS[s.month - 1]} 月
               </span>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400">
+                <span className="text-sm text-gray-400">
                   {new Date(s.updatedAt).toLocaleDateString('zh-TW')}
                 </span>
                 {onNavigateToSchedule && (
                   <button
                     onClick={() => onNavigateToSchedule(s.year, s.month)}
-                    className="text-xs text-blue-500 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition"
+                    className="text-sm text-blue-500 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition"
                   >
                     查看排班 →
                   </button>

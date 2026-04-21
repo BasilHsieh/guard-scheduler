@@ -71,19 +71,19 @@ export default function GuardsPage() {
                   {g.name}
                 </span>
                 {!g.active && (
-                  <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">已停用</span>
+                  <span className="text-sm text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">已停用</span>
                 )}
               </div>
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => toggleActive(g.id)}
-                  className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+                  className="px-3 py-1 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
                 >
                   {g.active ? '停用' : '啟用'}
                 </button>
                 <button
                   onClick={() => remove(g.id)}
-                  className="px-3 py-1 text-xs text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                  className="px-3 py-1 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
                 >
                   刪除
                 </button>
@@ -94,7 +94,7 @@ export default function GuardsPage() {
       )}
 
       {guards.length > 0 && (
-        <p className="mt-4 text-xs text-gray-400">
+        <p className="mt-4 text-sm text-gray-400">
           共 {guards.filter((g) => g.active).length} 位在職 / {guards.length} 位人員
         </p>
       )}

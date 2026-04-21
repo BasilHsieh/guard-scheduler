@@ -40,13 +40,13 @@ export default function PostsPage() {
               <span className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg">
                 {p.id}
               </span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${TYPE_COLOR[p.type]}`}>
+              <span className={`text-sm font-medium px-2 py-0.5 rounded-full ${TYPE_COLOR[p.type]}`}>
                 {TYPE_LABEL[p.type]}
               </span>
             </div>
             <button
               onClick={() => toggleHours(p.id)}
-              className="flex items-center gap-1 px-3 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition"
+              className="flex items-center gap-1 px-3 py-1 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition"
             >
               <span className="font-medium text-gray-800">{p.hours}h</span>
               <span className="text-gray-400">切換</span>
@@ -55,7 +55,7 @@ export default function PostsPage() {
         ))}
       </ul>
 
-      <p className="mt-4 text-xs text-gray-400">
+      <p className="mt-4 text-sm text-gray-400">
         點擊時數可在 10h / 12h 之間切換
       </p>
     </div>

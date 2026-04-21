@@ -82,10 +82,10 @@ export default function CalendarPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">月曆</h2>
-          <p className="text-sm text-gray-500">
+          <h2 className="text-2xl font-bold text-gray-900">月曆</h2>
+          <p className="text-base text-gray-500 mt-0.5">
             {calendar?.lastUpdated
               ? `假日資料更新於 ${new Date(calendar.lastUpdated).toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' })}`
               : '載入假日資料中…'}
@@ -95,24 +95,24 @@ export default function CalendarPage() {
           <button
             onClick={syncHolidays}
             disabled={syncing}
-            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-lg disabled:text-gray-400 transition"
+            className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 rounded-xl disabled:text-gray-400 transition"
           >
             {syncing ? '更新中…' : '更新假日資料'}
           </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={prevMonth} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 transition">‹</button>
-          <input
-            type="month"
-            value={`${year}-${String(month).padStart(2, '0')}`}
-            onChange={e => {
-              const [y, m] = e.target.value.split('-')
-              setYear(Number(y))
-              setMonth(Number(m))
-            }}
-            className="text-sm font-semibold text-gray-800 border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 transition"
-          />
-          <button onClick={nextMonth} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 transition">›</button>
+          <div className="flex items-center gap-1">
+            <button onClick={prevMonth} className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition text-xl font-light">‹</button>
+            <input
+              type="month"
+              value={`${year}-${String(month).padStart(2, '0')}`}
+              onChange={e => {
+                const [y, m] = e.target.value.split('-')
+                setYear(Number(y))
+                setMonth(Number(m))
+              }}
+              className="text-base font-semibold text-gray-800 border border-gray-200 rounded-xl px-4 py-2 outline-none focus:border-blue-400 transition"
+            />
+            <button onClick={nextMonth} className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition text-xl font-light">›</button>
+          </div>
         </div>
       </div>
 
@@ -148,22 +148,22 @@ export default function CalendarPage() {
               return (
                 <div
                   key={date}
-                  className={`border-b border-r border-gray-100 min-h-32 p-3 ${
+                  className={`border-b border-r border-gray-100 min-h-40 p-3 ${
                     isTyphoon ? 'bg-red-50' : isHoliday ? 'bg-blue-50' : 'bg-white'
                   } ${isLastRow ? 'border-b-0' : ''}`}
                 >
                   {/* 日期 + 假日名稱 */}
                   <div className="flex items-start justify-between mb-2">
-                    <span className={`text-base font-bold ${
+                    <span className={`text-lg font-bold ${
                       isTyphoon ? 'text-red-500' : isHoliday ? 'text-blue-500' : 'text-gray-700'
                     }`}>
                       {dayNum}
                     </span>
                     {isTyphoon && (
-                      <span className="text-xs bg-red-100 text-red-500 px-1.5 rounded">颱風</span>
+                      <span className="text-xs font-semibold bg-red-100 text-red-500 px-2 py-0.5 rounded-full">颱風</span>
                     )}
                     {caption && !isTyphoon && (
-                      <span className="text-xs text-blue-400 text-right leading-tight max-w-[60px]">{caption}</span>
+                      <span className="text-xs font-medium text-blue-400 text-right leading-tight max-w-[64px]">{caption}</span>
                     )}
                   </div>
 
@@ -178,10 +178,10 @@ export default function CalendarPage() {
                           return (
                             <div
                               key={a.guardId}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${POST_COLORS[a.postId!] ?? 'bg-gray-100 text-gray-600'}`}
+                              className={`flex items-center justify-between gap-1 px-2 py-1 rounded-lg text-sm font-medium ${POST_COLORS[a.postId!] ?? 'bg-gray-100 text-gray-600'}`}
                             >
                               <span>{guard.name}</span>
-                              <span className="opacity-60">{a.postId}</span>
+                              <span className="font-bold opacity-70">{a.postId}</span>
                             </div>
                           )
                         })}

@@ -31,30 +31,36 @@ interface Props {
 
 export default function Sidebar({ current, onNavigate }: Props) {
   return (
-    <aside className="w-52 shrink-0 bg-white border-r border-gray-200 flex flex-col py-6 px-3">
-      <div className="px-3 mb-6">
-        <h1 className="text-base font-semibold text-gray-900 tracking-tight">保全排班</h1>
+    <aside className="w-56 shrink-0 bg-slate-900 flex flex-col py-6 px-4">
+      {/* 品牌 */}
+      <div className="px-2 mb-8">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-blue-500 rounded-lg flex items-center justify-center text-white text-sm font-bold">
+            保
+          </div>
+          <h1 className="text-base font-bold text-white tracking-tight">保全排班</h1>
+        </div>
       </div>
 
-      <nav className="flex-1 space-y-5">
+      <nav className="flex-1 space-y-6">
         {sections.map((section) => (
           <div key={section.title}>
-            <p className="px-3 mb-1 text-xs font-medium text-gray-400 uppercase tracking-wider">
+            <p className="px-2 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-widest">
               {section.title}
             </p>
-            <ul className="space-y-0.5">
+            <ul className="space-y-1">
               {section.items.map((item) => (
                 <li key={item.id}>
                   <button
                     onClick={() => onNavigate(item.id)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm text-left transition-colors ${
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition-all ${
                       current === item.id
-                        ? 'bg-blue-50 text-blue-600 font-medium'
-                        : 'text-gray-600 hover:bg-gray-100'
+                        ? 'bg-blue-500 text-white font-semibold shadow-sm'
+                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                     }`}
                   >
-                    <span className="text-base">{item.icon}</span>
-                    {item.label}
+                    <span className="text-base leading-none">{item.icon}</span>
+                    <span>{item.label}</span>
                   </button>
                 </li>
               ))}
