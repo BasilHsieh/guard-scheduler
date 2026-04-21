@@ -382,8 +382,6 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
                   const isHoliday = daySchedule?.isHoliday ?? false
                   const isTyphoon = daySchedule?.isTyphoon ?? false
                   const isOff = isHoliday || isWeekend
-                  const isHeaderOpen = editingHeader === date
-
                   return (
                     <th
                       key={date}
