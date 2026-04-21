@@ -63,7 +63,7 @@ export function getCalendar(year: number): CalendarData | null {
   const data = get<CalendarData>(KEYS.calendarYear(year))
   if (!data) return null
   // 相容舊格式（沒有 holidayNames）
-  return { holidayNames: {}, ...data }
+  return { ...data, holidayNames: data.holidayNames ?? {} }
 }
 
 export function saveCalendar(data: CalendarData): void {

@@ -4,7 +4,11 @@ import { getScheduleIndex, exportBackup, importBackup } from '../store'
 
 const MONTHS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
 
-export default function RecordsPage() {
+interface Props {
+  onNavigateToSchedule?: (year: number, month: number) => void
+}
+
+export default function RecordsPage({ onNavigateToSchedule }: Props) {
   const [index, setIndex] = useState<ScheduleIndex[]>([])
 
   useEffect(() => {
@@ -69,9 +73,19 @@ export default function RecordsPage() {
               <span className="text-sm font-medium text-gray-900">
                 {s.year} 年 {MONTHS[s.month - 1]} 月
               </span>
-              <span className="text-xs text-gray-400">
-                {new Date(s.updatedAt).toLocaleDateString('zh-TW')}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">
+                  {new Date(s.updatedAt).toLocaleDateString('zh-TW')}
+                </span>
+                {onNavigateToSchedule && (
+                  <button
+                    onClick={() => onNavigateToSchedule(s.year, s.month)}
+                    className="text-xs text-blue-500 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition"
+                  >
+                    查看排班 →
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

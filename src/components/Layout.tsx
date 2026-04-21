@@ -10,10 +10,21 @@ export type Page = 'schedule' | 'records' | 'guards' | 'posts' | 'calendar'
 
 export default function Layout() {
   const [page, setPage] = useState<Page>('calendar')
+  const [scheduleNav, setScheduleNav] = useState<{ year: number; month: number } | null>(null)
+
+  function navigateToSchedule(year: number, month: number) {
+    setScheduleNav({ year, month })
+    setPage('schedule')
+  }
+
+  function handleNavigate(p: Page) {
+    if (p !== 'schedule') setScheduleNav(null)
+    setPage(p)
+  }
 
   const content = {
-    schedule: <SchedulePage />,
-    records: <RecordsPage />,
+    schedule: <SchedulePage initialYear={scheduleNav?.year} initialMonth={scheduleNav?.month} />,
+    records: <RecordsPage onNavigateToSchedule={navigateToSchedule} />,
     guards: <GuardsPage />,
     posts: <PostsPage />,
     calendar: <CalendarPage />,
@@ -21,7 +32,7 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 font-[-apple-system,BlinkMacSystemFont,'SF_Pro_Display',sans-serif]">
-      <Sidebar current={page} onNavigate={setPage} />
+      <Sidebar current={page} onNavigate={handleNavigate} />
       <main className="flex-1 overflow-y-auto p-8">{content}</main>
     </div>
   )

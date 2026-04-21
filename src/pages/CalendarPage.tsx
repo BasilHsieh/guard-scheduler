@@ -4,7 +4,6 @@ import { getSchedule, getGuards, getCalendar, saveCalendar } from '../store'
 import { loadCalendar } from '../lib/calendar'
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-const MONTHS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二']
 
 const POST_COLORS: Record<string, string> = {
   A: 'bg-blue-100 text-blue-700',
