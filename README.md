@@ -2,7 +2,7 @@
 
 自動化保全人員月排班系統，解決手動 Excel 排班耗時且難以兼顧所有規則的問題。
 
-**[→ 線上展示](https://guard-scheduler.vercel.app)** _(即將上線)_
+**[→ 線上展示](https://basil-guard-scheduler.vercel.app)**
 
 ---
 
