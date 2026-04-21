@@ -39,6 +39,10 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
   const [posts, setPosts] = useState<Post[]>([])
   const [editingCell, setEditingCell] = useState<{ date: string; guardId: string } | null>(null)
   const [editingHeader, setEditingHeader] = useState<string | null>(null)
+  const [typhoonModal, setTyphoonModal] = useState<{
+    selectedDate?: string
+    action?: 'set' | 'cancel'
+  } | null>(null)
   const [leaveModal, setLeaveModal] = useState<{
     date: string; guardId: string; postId: PostId
     step: 1 | 2; candidateId?: string
@@ -128,6 +132,7 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
     saveSchedule(updated)
     setSchedule(updated)
     setEditingHeader(null)
+    setTyphoonModal(null)
   }
 
   function handleExportCSV() {
@@ -154,7 +159,6 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
 
   function handleUntyphoon(date: string) {
     if (!schedule) return
-    if (!window.confirm(`確定取消 ${date.slice(5).replace('-', '/')} 的颱風假？將還原原始排班。`)) return
     const updated: MonthSchedule = {
       ...schedule,
       days: schedule.days.map(d => {
@@ -171,6 +175,7 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
     saveSchedule(updated)
     setSchedule(updated)
     setEditingHeader(null)
+    setTyphoonModal(null)
   }
 
   // 找出可以換班的候選人：當天休息、且換進來不違反規則 1&2
@@ -328,12 +333,20 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
             <button onClick={nextMonth} className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition text-xl font-light">›</button>
           </div>
           {schedule && (
-            <button
-              onClick={handleExportCSV}
-              className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 border border-gray-200 font-medium rounded-xl transition"
-            >
-              匯出 CSV
-            </button>
+            <>
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 border border-gray-200 font-medium rounded-xl transition"
+              >
+                匯出 CSV
+              </button>
+              <button
+                onClick={() => setTyphoonModal({})}
+                className="px-4 py-2.5 text-sm text-gray-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-gray-200 font-medium rounded-xl transition"
+              >
+                颱風假
+              </button>
+            </>
           )}
           <button
             onClick={handleGenerate}
@@ -374,10 +387,9 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
                   return (
                     <th
                       key={date}
-                      className={`relative border-b-2 border-r border-gray-200 px-1 py-3 text-center min-w-[3.5rem] cursor-pointer select-none transition ${
-                        isTyphoon ? 'bg-red-50 hover:bg-red-100' : isOff ? 'bg-blue-50 hover:bg-blue-100' : 'bg-gray-50 hover:bg-gray-100'
-                      } ${isHeaderOpen ? 'ring-2 ring-inset ring-blue-400' : ''}`}
-                      onClick={() => setEditingHeader(prev => prev === date ? null : date)}
+                      className={`relative border-b-2 border-r border-gray-200 px-1 py-2 text-center min-w-[3.5rem] select-none ${
+                        isTyphoon ? 'bg-red-50' : isOff ? 'bg-blue-50' : 'bg-gray-50'
+                      }`}
                     >
                       <div className={`text-xs font-semibold tracking-wide ${isOff ? 'text-blue-400' : 'text-gray-400'}`}>
                         {DOW[dow]}
@@ -385,37 +397,10 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
                       <div className={`text-base font-bold leading-tight mt-0.5 ${isTyphoon ? 'text-red-500' : isOff ? 'text-blue-600' : 'text-gray-700'}`}>
                         {parseInt(date.slice(8))}
                       </div>
-                      {isTyphoon && (
-                        <div className="text-xs font-bold text-red-400 leading-tight">颱</div>
-                      )}
 
-                      {/* 颱風假 Popover — 只對平日顯示（假日本來就沒 D/E） */}
-                      {isHeaderOpen && (
-                        <div
-                          ref={headerPopoverRef}
-                          className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1.5 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden min-w-28"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          {isTyphoon ? (
-                            <button
-                              onClick={() => handleUntyphoon(date)}
-                              className="w-full px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 transition text-left whitespace-nowrap"
-                            >
-                              取消颱風假
-                            </button>
-                          ) : isOff ? (
-                            <div className="px-3 py-2.5 text-sm text-gray-400 whitespace-nowrap">
-                              假日不適用
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => handleTyphoon(date)}
-                              className="w-full px-3 py-2.5 text-sm font-medium text-orange-500 hover:bg-orange-50 transition text-left whitespace-nowrap"
-                            >
-                              設定颱風假
-                            </button>
-                          )}
-                        </div>
+                      {/* 颱風中顯示標記 */}
+                      {isTyphoon && (
+                        <div className="mt-0.5 text-xs font-bold text-red-400">颱</div>
                       )}
                     </th>
                   )
@@ -559,6 +544,165 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
           </table>
         </div>
       )}
+
+      {/* 颱風假 Modal（月曆選日） */}
+      {typhoonModal !== null && schedule && (() => {
+        const calendar = getCalendar(year)
+        const holidays = calendar?.holidays ?? []
+        const firstDow = new Date(year, month - 1, 1).getDay()
+        const blanks = Array(firstDow).fill(null)
+        const { selectedDate, action } = typhoonModal
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setTyphoonModal(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-[22rem] overflow-hidden" onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div>
+                  <p className="text-base font-bold text-gray-900">颱風假</p>
+                  <p className="text-sm text-gray-400 mt-0.5">
+                    {year} 年 {month} 月 · 點選平日設定或取消
+                  </p>
+                </div>
+                <button
+                  onClick={() => setTyphoonModal(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Calendar grid */}
+              <div className="px-4 pt-3 pb-2">
+                {/* Weekday labels */}
+                <div className="grid grid-cols-7 mb-1">
+                  {['日','一','二','三','四','五','六'].map((d, i) => (
+                    <div key={d} className={`text-center text-xs font-semibold py-1.5 ${i === 0 || i === 6 ? 'text-blue-400' : 'text-gray-400'}`}>
+                      {d}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Date cells */}
+                <div className="grid grid-cols-7 gap-0.5">
+                  {blanks.map((_, i) => <div key={`b${i}`} />)}
+                  {days.map(date => {
+                    const ds = schedule.days.find(d => d.date === date)
+                    const dow = new Date(date).getDay()
+                    const isWeekendDay = dow === 0 || dow === 6
+                    const isHolidayDay = ds?.isHoliday || holidays.includes(date)
+                    const isOff = isWeekendDay || isHolidayDay
+                    const isTyphoon = ds?.isTyphoon ?? false
+                    const dayNum = parseInt(date.slice(8))
+                    const isSelected = selectedDate === date
+
+                    if (isTyphoon) {
+                      // Red — click to select for cancellation
+                      return (
+                        <button
+                          key={date}
+                          onClick={() => setTyphoonModal({ selectedDate: date, action: 'cancel' })}
+                          className={`aspect-square flex items-center justify-center rounded-lg text-sm font-bold transition ${
+                            isSelected && action === 'cancel'
+                              ? 'bg-red-500 text-white ring-2 ring-red-300'
+                              : 'bg-red-100 text-red-500 hover:bg-red-200'
+                          }`}
+                          title="點擊取消颱風假"
+                        >
+                          {dayNum}
+                        </button>
+                      )
+                    }
+
+                    if (isOff) {
+                      // Greyed out — not applicable
+                      return (
+                        <div key={date} className="aspect-square flex items-center justify-center">
+                          <span className="text-sm text-gray-200">{dayNum}</span>
+                        </div>
+                      )
+                    }
+
+                    // Weekday — clickable to set typhoon
+                    return (
+                      <button
+                        key={date}
+                        onClick={() => setTyphoonModal({ selectedDate: date, action: 'set' })}
+                        className={`aspect-square flex items-center justify-center rounded-lg text-sm font-medium transition ${
+                          isSelected && action === 'set'
+                            ? 'bg-amber-500 text-white ring-2 ring-amber-300'
+                            : 'text-gray-700 hover:bg-amber-50 hover:text-amber-700'
+                        }`}
+                      >
+                        {dayNum}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Confirm panel — shows when a date is selected */}
+              {selectedDate && action ? (
+                <div className="px-4 pb-4">
+                  <div className={`rounded-xl px-4 py-3 mb-3 text-sm space-y-1 ${
+                    action === 'cancel'
+                      ? 'bg-gray-50 text-gray-600 border border-gray-200'
+                      : 'bg-amber-50 text-amber-800 border border-amber-100'
+                  }`}>
+                    <p className="font-semibold mb-1.5">
+                      {selectedDate.slice(5).replace('-', '/')} ·{' '}
+                      {action === 'cancel' ? '取消颱風假，還原原始排班' : '設定為颱風假'}
+                    </p>
+                    {action === 'set' && (
+                      <>
+                        <p className="text-amber-700">· D、E 人員改上 <strong>F、G</strong> 班</p>
+                        <p className="text-amber-700">· A、B、C 人員當日休假</p>
+                        <p className="text-xs text-amber-500 pt-1">可隨時取消還原原始排班</p>
+                      </>
+                    )}
+                    {action === 'cancel' && (
+                      <p className="text-gray-500">原始排班將被還原</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setTyphoonModal({})}
+                      className="flex-1 py-2.5 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50 transition"
+                    >
+                      重新選擇
+                    </button>
+                    <button
+                      onClick={() => action === 'set' ? handleTyphoon(selectedDate) : handleUntyphoon(selectedDate)}
+                      className={`flex-1 py-2.5 text-sm font-semibold text-white rounded-xl transition ${
+                        action === 'cancel'
+                          ? 'bg-gray-500 hover:bg-gray-600'
+                          : 'bg-amber-500 hover:bg-amber-600'
+                      }`}
+                    >
+                      {action === 'cancel' ? '確定取消' : '確定設定'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 pb-4 pt-1">
+                  <div className="flex items-center gap-3 text-xs text-gray-400 px-1 mb-3">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded bg-amber-100 inline-block" />
+                      點選設定
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded bg-red-100 inline-block" />
+                      已設定（點選取消）
+                    </span>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )
+      })()}
 
       {/* 請假換班 Modal */}
       {leaveModal && (() => {
