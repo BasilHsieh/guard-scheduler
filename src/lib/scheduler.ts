@@ -1,5 +1,36 @@
 import type { Guard, Post, DaySchedule, MonthSchedule, Assignment, PostId } from '../types'
 
+// ─── 型別 ────────────────────────────────────────────────────────────────────
+
+/**
+ * 跨月銜接資料：上個月最後一天結束時每人的狀態。
+ * 若省略，視為全部歸零（月初無任何限制）。
+ */
+export interface MonthContext {
+  consecutive: Record<string, number>
+  lastPost: Record<string, PostId | null>
+  lastHolidayDow: Record<string, number | null>
+  lastHolidayPost: Record<string, PostId | null>
+}
+
+interface RuntimeState {
+  consecutive: Record<string, number>
+  lastPost: Record<string, PostId | null>
+  lastHolidayDow: Record<string, number | null>
+  lastHolidayPost: Record<string, PostId | null>
+  totalHours: Record<string, number>
+  postCounts: Record<string, Record<PostId, number>>
+  remaining: Record<string, Record<PostId, number>>
+}
+
+interface AttemptResult {
+  days: DaySchedule[]
+  hardViolations: number   // 0 = 所有硬約束滿足
+  hoursSpread: number
+  postExcessSum: number    // ∑ max(0, spread - 1) across all posts（門檻超額加總）
+  postSpreadSum: number    // ∑ spread（絕對哨點差加總，tiebreak 用）
+}
+
 // ─── 日期工具 ────────────────────────────────────────────────────────────────
 
 function getDaysInMonth(year: number, month: number): string[] {
@@ -11,221 +42,351 @@ function getDaysInMonth(year: number, month: number): string[] {
   return days
 }
 
+function dayOfWeek(date: string): number {
+  return new Date(date).getDay()
+}
+
 function isWeekend(date: string): boolean {
-  return [0, 6].includes(new Date(date).getDay())
+  return [0, 6].includes(dayOfWeek(date))
 }
 
-function prevDateStr(date: string): string {
-  const d = new Date(date)
-  d.setDate(d.getDate() - 1)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+// ─── RNG（mulberry32：seedable、輕量、品質足夠） ──────────────────────────────
 
-// ─── 排班規則輔助 ─────────────────────────────────────────────────────────────
-
-function getLastHolidayAssignment(
-  guardId: string,
-  beforeDate: string,
-  days: DaySchedule[]
-): { date: string; postId: PostId } | null {
-  const holidayDays = days
-    .filter((d) => d.date < beforeDate && (d.isHoliday || isWeekend(d.date)))
-    .reverse()
-  for (const day of holidayDays) {
-    const a = day.assignments.find((a) => a.guardId === guardId && a.postId !== null)
-    if (a?.postId) return { date: day.date, postId: a.postId }
+function makeRng(seed: number): () => number {
+  let t = seed >>> 0
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0
+    let r = Math.imul(t ^ (t >>> 15), 1 | t)
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296
   }
-  return null
 }
 
-function isHolidayAssignmentValid(
-  guardId: string,
-  date: string,
-  postId: PostId,
-  days: DaySchedule[]
-): boolean {
-  const last = getLastHolidayAssignment(guardId, date, days)
-  if (!last) return true
-  return (
-    new Date(last.date).getDay() !== new Date(date).getDay() &&
-    last.postId !== postId
-  )
-}
-
-function countConsecutiveWorkDays(guardId: string, beforeDate: string, days: DaySchedule[]): number {
-  let count = 0
-  for (const day of [...days].reverse()) {
-    if (day.date >= beforeDate) continue
-    if (day.assignments.some((a) => a.guardId === guardId && a.postId !== null)) count++
-    else break
+function shuffle<T>(arr: T[], rng: () => number): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
   }
-  return count
+  return a
 }
 
-function getYesterdayPost(guardId: string, date: string, days: DaySchedule[]): PostId | null {
-  const yDate = prevDateStr(date)
-  return (
-    days.find((d) => d.date === yDate)?.assignments.find((a) => a.guardId === guardId)?.postId ??
-    null
-  )
-}
-
-function computeCurrentHours(guardId: string, days: DaySchedule[], posts: Post[]): number {
-  return days.reduce((total, day) => {
-    const a = day.assignments.find((a) => a.guardId === guardId)
-    if (!a?.postId) return total
-    return total + (posts.find((p) => p.id === a.postId)?.hours ?? 0)
-  }, 0)
-}
-
-// ─── Phase 1：預算配額 ────────────────────────────────────────────────────────
+// ─── Phase 1：配額計算 ───────────────────────────────────────────────────────
 //
-// Step 1：每個哨點基礎配額 = ⌊T/N⌋（保證差距 ≤ 1）
-// Step 2：把所有哨點的多餘名額集中在一起，按時數由高到低，
-//          統一分給「目前多餘時數最少」的人（全域最小化時數方差），
-//          同一哨點每人只能拿一個多餘名額。
+// 基礎配額 = ⌊總格數 / 人數⌋，把餘數按時數由高到低發給「目前多餘時數最少」者，
+// 確保每哨點 base ≤ 1 差距、總時數盡量平均。
 
 function calcTargetCounts(
   allDates: string[],
   holidays: string[],
   posts: Post[],
-  guards: Guard[]
+  guards: Guard[],
+  rng?: () => number
 ): Record<string, Record<PostId, number>> {
   const N = guards.length
   const targets: Record<string, Record<PostId, number>> = {}
-  for (const g of guards) targets[g.id] = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 }
+  const projectedHours: Record<string, number> = {}
+  for (const g of guards) {
+    targets[g.id] = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 }
+    projectedHours[g.id] = 0
+  }
 
-  const postTotals = new Map<PostId, number>()
+  // 對齊 Python solver._build_targets：逐哨點依序處理，每次依「當下累積預估時數」配 extras
   for (const post of posts) {
     const total = allDates.filter((d) =>
       post.type === 'holiday'
         ? holidays.includes(d) || isWeekend(d)
         : !holidays.includes(d) && !isWeekend(d)
     ).length
-    postTotals.set(post.id, total)
     const base = Math.floor(total / N)
-    for (const g of guards) targets[g.id][post.id] = base
-  }
-
-  interface ExtraSlot { postId: PostId; hours: number }
-  const allExtras: ExtraSlot[] = []
-  for (const post of posts) {
-    const extras = (postTotals.get(post.id) ?? 0) % N
-    for (let i = 0; i < extras; i++) allExtras.push({ postId: post.id, hours: post.hours })
-  }
-  allExtras.sort((a, b) => b.hours - a.hours)
-
-  const extraHours = new Map<string, number>(guards.map((g) => [g.id, 0]))
-  const extraReceived = new Map<string, Set<PostId>>(guards.map((g) => [g.id, new Set()]))
-
-  for (const extra of allExtras) {
-    let minId: string | null = null
-    let minH = Infinity
     for (const g of guards) {
-      if (extraReceived.get(g.id)!.has(extra.postId)) continue
-      const h = extraHours.get(g.id) ?? 0
-      if (h < minH) { minH = h; minId = g.id }
+      targets[g.id][post.id] = base
+      projectedHours[g.id] += base * post.hours
     }
-    if (!minId) continue
-    targets[minId][extra.postId]++
-    extraReceived.get(minId)!.add(extra.postId)
-    extraHours.set(minId, (extraHours.get(minId) ?? 0) + extra.hours)
+    const extras = total % N
+    if (extras === 0) continue
+    const jitter = rng ?? Math.random
+    const order = [...guards]
+      .map((g) => ({ g, key: projectedHours[g.id], tie: jitter() }))
+      .sort((a, b) => a.key - b.key || a.tie - b.tie)
+      .map((x) => x.g)
+    for (let i = 0; i < extras; i++) {
+      const g = order[i]
+      targets[g.id][post.id]++
+      projectedHours[g.id] += post.hours
+    }
   }
 
   return targets
 }
 
-// ─── Phase 2：逐日排班（回溯最佳指派） ───────────────────────────────────────
-//
-// 每天為所有 (人員, 哨點) 組合計算「緊迫度分數」：
-//
-//   urgency(G, P) = remaining[G][P] − target[G][P] × (同類型剩餘天數 / 總天數)
-//
-//   正值 → 落後進度（優先排）；負值 → 超前進度（可晚排）
-//
-// 用**回溯搜尋**窮舉當天所有可能的完整指派（最多 P(6,5)=720 種），
-// 選出「所有 (人員, 哨點) urgency 分數加總最高」的指派。
-//
-// 與貪婪法相比：回溯保證每天的指派是全域最優，
-// 不會因為「搶先佔了高分 pair」而讓另一人錯失其配額。
+// ─── 初始狀態 ────────────────────────────────────────────────────────────────
 
-interface DayAssignment { guardId: string; postId: PostId }
+function initState(
+  guards: Guard[],
+  targets: Record<string, Record<PostId, number>>,
+  carryOver: MonthContext | undefined
+): RuntimeState {
+  const state: RuntimeState = {
+    consecutive: {},
+    lastPost: {},
+    lastHolidayDow: {},
+    lastHolidayPost: {},
+    totalHours: {},
+    postCounts: {},
+    remaining: {},
+  }
+  for (const g of guards) {
+    state.consecutive[g.id] = carryOver?.consecutive[g.id] ?? 0
+    state.lastPost[g.id] = carryOver?.lastPost[g.id] ?? null
+    state.lastHolidayDow[g.id] = carryOver?.lastHolidayDow[g.id] ?? null
+    state.lastHolidayPost[g.id] = carryOver?.lastHolidayPost[g.id] ?? null
+    state.totalHours[g.id] = 0
+    state.postCounts[g.id] = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 }
+    state.remaining[g.id] = { ...targets[g.id] }
+  }
+  return state
+}
 
-function findOptimalDayAssignment(
+// ─── 硬約束過濾 ──────────────────────────────────────────────────────────────
+//
+// 回傳「給定 post，哪些 guards 可以合法指派」。
+// 違反任一硬約束者直接排除（而非分數懲罰）。
+
+function eligibleGuards(
+  guards: Guard[],
+  date: string,
+  postId: PostId,
+  isHoliday: boolean,
+  state: RuntimeState
+): Guard[] {
+  const dow = dayOfWeek(date)
+  const isHolidayPost = postId === 'F' || postId === 'G'
+
+  return guards.filter((g) => {
+    // 規則 1：連續 6 天必須休息
+    if (state.consecutive[g.id] >= 6) return false
+    // 規則 2：昨天同哨點不可再排
+    if (state.lastPost[g.id] === postId) return false
+    // 規則 3 & 4：假日 F/G 哨點的星期與哨點交替
+    if (isHoliday && isHolidayPost) {
+      if (state.lastHolidayDow[g.id] === dow) return false
+      if (state.lastHolidayPost[g.id] === postId) return false
+    }
+    return true
+  })
+}
+
+// ─── 評分（僅用於候選排序，不做硬判定） ─────────────────────────────────────
+//
+// 因為候選已通過硬過濾，這裡的分數決定「優先探索順序」：
+//   deficit   配額落後越多 → 越優先（避免月底補不回來）
+//   hourGap   已上總時數比他人少 → 略加分（時數平均）
+//   streak    連續天數 → 略扣分（不要累到第 6 天）
+//   jitter    小幅隨機 → 打破平手、配合多次重試
+
+function scoreCandidate(
+  g: Guard,
+  postId: PostId,
+  state: RuntimeState,
+  targets: Record<string, Record<PostId, number>>,
+  avgHours: number,
+  rng: () => number
+): number {
+  // deficit 允許為負（已超過配額者扣分）—對齊 Python solver 的行為
+  const deficit = targets[g.id][postId] - state.postCounts[g.id][postId]
+  const hourGap = avgHours - state.totalHours[g.id]
+  const streak = state.consecutive[g.id]
+  const jitter = rng() * 0.05
+  return deficit * 9 + hourGap * 0.8 - streak * 0.7 + jitter
+}
+
+// ─── 日內 backtracking：為當天所有必要哨點找合法且最佳的指派 ──────────────────
+
+interface DayResult {
+  assignments: { guardId: string; postId: PostId }[]
+}
+
+function solveDay(
+  date: string,
+  isHoliday: boolean,
   requiredPosts: PostId[],
-  eligible: Guard[],
-  scoreFn: (g: Guard, p: PostId) => number
-): DayAssignment[] {
-  let bestTotal = -Infinity
-  let bestResult: DayAssignment[] = []
+  activeGuards: Guard[],
+  state: RuntimeState,
+  targets: Record<string, Record<PostId, number>>,
+  avgHours: number,
+  rng: () => number
+): DayResult | null {
+  const used = new Set<string>()
+  const chosen: { guardId: string; postId: PostId }[] = []
 
-  // 為每個哨點預先排序候選人（由高到低），讓回溯優先探索好的分支
-  const sorted: Map<PostId, Guard[]> = new Map(
-    requiredPosts.map((p) => [
-      p,
-      [...eligible].sort((a, b) => scoreFn(b, p) - scoreFn(a, p)),
-    ])
-  )
+  // 動態 most-constrained-first：每層遞迴時重新計算各哨點的剩餘候選人，
+  // 挑候選最少的先排（對齊 Python solver.choose_next_post）
+  function bt(remainingPosts: PostId[]): boolean {
+    if (remainingPosts.length === 0) return true
 
-  function bt(
-    postIdx: number,
-    usedGuards: Set<string>,
-    current: DayAssignment[],
-    totalScore: number
-  ) {
-    if (postIdx === requiredPosts.length) {
-      if (totalScore > bestTotal) {
-        bestTotal = totalScore
-        bestResult = [...current]
+    let bestPost: PostId | null = null
+    let bestCandidates: Guard[] = []
+    let bestCount = Infinity
+    for (const p of remainingPosts) {
+      const cs = eligibleGuards(activeGuards, date, p, isHoliday, state)
+        .filter((g) => !used.has(g.id))
+      if (cs.length < bestCount) {
+        bestCount = cs.length
+        bestPost = p
+        bestCandidates = cs
       }
-      return
     }
+    if (bestPost === null || bestCandidates.length === 0) return false
 
-    const postId = requiredPosts[postIdx]
-    const candidates = sorted.get(postId)!.filter((g) => !usedGuards.has(g.id))
+    // 評分並降序排列候選人
+    const scored = bestCandidates
+      .map((g) => ({ g, s: scoreCandidate(g, bestPost!, state, targets, avgHours, rng) }))
+      .sort((a, b) => b.s - a.s)
 
-    if (candidates.length === 0) {
-      // 理論上不應發生（人數 > 哨點數），視為大幅懲罰
-      if (totalScore - 10000 > bestTotal || bestResult.length === 0) {
-        bt(postIdx + 1, usedGuards, current, totalScore - 10000)
-      }
-      return
+    const nextRemaining = remainingPosts.filter((p) => p !== bestPost)
+    for (const { g } of scored) {
+      used.add(g.id)
+      chosen.push({ guardId: g.id, postId: bestPost })
+      if (bt(nextRemaining)) return true
+      chosen.pop()
+      used.delete(g.id)
     }
+    return false
+  }
 
-    for (const g of candidates) {
-      const s = scoreFn(g, postId)
-      usedGuards.add(g.id)
-      current.push({ guardId: g.id, postId })
-      bt(postIdx + 1, usedGuards, current, totalScore + s)
-      current.pop()
-      usedGuards.delete(g.id)
+  if (!bt([...requiredPosts])) return null
+  return { assignments: chosen }
+}
+
+// ─── 狀態轉移：套用一天的結果並更新 RuntimeState ─────────────────────────────
+
+function applyDay(
+  date: string,
+  isHoliday: boolean,
+  result: DayResult,
+  activeGuards: Guard[],
+  state: RuntimeState,
+  posts: Post[]
+): DaySchedule {
+  const workedIds = new Set(result.assignments.map((a) => a.guardId))
+  const postHours = new Map(posts.map((p) => [p.id, p.hours]))
+  const dow = dayOfWeek(date)
+
+  for (const { guardId, postId } of result.assignments) {
+    state.consecutive[guardId] += 1
+    state.lastPost[guardId] = postId
+    state.totalHours[guardId] += postHours.get(postId) ?? 0
+    state.postCounts[guardId][postId] += 1
+    state.remaining[guardId][postId] = Math.max(0, state.remaining[guardId][postId] - 1)
+    if (isHoliday && (postId === 'F' || postId === 'G')) {
+      state.lastHolidayDow[guardId] = dow
+      state.lastHolidayPost[guardId] = postId
+    }
+  }
+  for (const g of activeGuards) {
+    if (!workedIds.has(g.id)) {
+      state.consecutive[g.id] = 0
+      state.lastPost[g.id] = null
     }
   }
 
-  bt(0, new Set(), [], 0)
-  return bestResult
+  const assignments: Assignment[] = activeGuards.map((g) => {
+    const a = result.assignments.find((x) => x.guardId === g.id)
+    return { guardId: g.id, postId: a ? a.postId : null }
+  })
+
+  return { date, isHoliday, isTyphoon: false, assignments }
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
+// ─── 單次嘗試 ────────────────────────────────────────────────────────────────
+
+function attemptSchedule(
+  allDates: string[],
+  holidays: string[],
+  activeGuards: Guard[],
+  posts: Post[],
+  targets: Record<string, Record<PostId, number>>,
+  carryOver: MonthContext | undefined,
+  rng: () => number
+): DaySchedule[] | null {
+  const state = initState(activeGuards, targets, carryOver)
+  const weekdayPostIds = posts.filter((p) => p.type === 'weekday').map((p) => p.id) as PostId[]
+  const holidayPostIds = posts.filter((p) => p.type === 'holiday').map((p) => p.id) as PostId[]
+
+  const totalMonthHours = posts.reduce((s, p) => {
+    const count = allDates.filter((d) =>
+      p.type === 'holiday'
+        ? holidays.includes(d) || isWeekend(d)
+        : !holidays.includes(d) && !isWeekend(d)
+    ).length
+    return s + count * p.hours
+  }, 0)
+  const avgHoursTarget = totalMonthHours / activeGuards.length
+
+  const days: DaySchedule[] = []
+  for (const date of allDates) {
+    const isHoliday = holidays.includes(date) || isWeekend(date)
+    const required = isHoliday ? holidayPostIds : weekdayPostIds
+    const result = solveDay(date, isHoliday, required, activeGuards, state, targets, avgHoursTarget, rng)
+    if (!result) return null
+    days.push(applyDay(date, isHoliday, result, activeGuards, state, posts))
   }
-  return a
+  return days
 }
 
-function hoursSpread(schedule: MonthSchedule, posts: Post[]): number {
+// ─── 統計與品質比較 ──────────────────────────────────────────────────────────
+
+function evaluateAttempt(days: DaySchedule[], posts: Post[], guards: Guard[]): AttemptResult {
   const hours: Record<string, number> = {}
-  for (const day of schedule.days) {
+  const counts: Record<string, Record<PostId, number>> = {}
+  for (const g of guards) {
+    hours[g.id] = 0
+    counts[g.id] = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 }
+  }
+  const postHours = new Map(posts.map((p) => [p.id, p.hours]))
+  for (const day of days) {
     for (const a of day.assignments) {
       if (!a.postId) continue
-      hours[a.guardId] = (hours[a.guardId] ?? 0) + (posts.find((p) => p.id === a.postId)?.hours ?? 0)
+      hours[a.guardId] += postHours.get(a.postId) ?? 0
+      counts[a.guardId][a.postId] += 1
     }
   }
-  const vals = Object.values(hours)
-  if (vals.length === 0) return 0
-  return Math.max(...vals) - Math.min(...vals)
+
+  const hoursVals = Object.values(hours)
+  const hoursSpread = hoursVals.length ? Math.max(...hoursVals) - Math.min(...hoursVals) : 0
+
+  const postIds: PostId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+  let postSpreadSum = 0
+  let postExcessSum = 0
+  for (const p of postIds) {
+    const cs = guards.map((g) => counts[g.id][p])
+    const spread = Math.max(...cs) - Math.min(...cs)
+    postSpreadSum += spread
+    postExcessSum += Math.max(0, spread - 1)
+  }
+
+  return { days, hardViolations: 0, hoursSpread, postExcessSum, postSpreadSum }
+}
+
+// 字典序比較（對齊 Python solver._objective）：
+//   硬違規 → 時數門檻超額 → 哨點門檻超額加總 → 絕對時數差 → 絕對哨點差加總
+function isBetter(a: AttemptResult, b: AttemptResult): boolean {
+  if (a.hardViolations !== b.hardViolations) return a.hardViolations < b.hardViolations
+  const aHourExcess = Math.max(0, a.hoursSpread - 12)
+  const bHourExcess = Math.max(0, b.hoursSpread - 12)
+  if (aHourExcess !== bHourExcess) return aHourExcess < bHourExcess
+  if (a.postExcessSum !== b.postExcessSum) return a.postExcessSum < b.postExcessSum
+  if (a.hoursSpread !== b.hoursSpread) return a.hoursSpread < b.hoursSpread
+  return a.postSpreadSum < b.postSpreadSum
+}
+
+// ─── 公開 API ────────────────────────────────────────────────────────────────
+
+export interface GenerateOptions {
+  carryOver?: MonthContext
+  attempts?: number
+  seed?: number
 }
 
 export function generateSchedule(
@@ -233,107 +394,110 @@ export function generateSchedule(
   month: number,
   guards: Guard[],
   posts: Post[],
-  holidays: string[]
+  holidays: string[],
+  options: GenerateOptions = {}
 ): MonthSchedule {
-  // 多跑幾次，取時數差最小的結果
-  const ATTEMPTS = 20
-  let best: MonthSchedule | null = null
-  let bestSpread = Infinity
-  for (let i = 0; i < ATTEMPTS; i++) {
-    const result = generateScheduleOnce(year, month, guards, posts, holidays)
-    const spread = hoursSpread(result, posts)
-    if (spread < bestSpread) { bestSpread = spread; best = result }
-    if (bestSpread === 0) break
+  const activeGuards = guards.filter((g) => g.active)
+  const allDates = getDaysInMonth(year, month)
+
+  if (activeGuards.length === 0) {
+    return { year, month, days: [], updatedAt: new Date().toISOString() }
   }
-  return best!
+
+  const attempts = options.attempts ?? 1000
+  const baseSeed = options.seed ?? Date.now()
+  const targetsRng = makeRng(baseSeed)
+  const targets = calcTargetCounts(allDates, holidays, posts, activeGuards, targetsRng)
+
+  let best: AttemptResult | null = null
+
+  for (let i = 0; i < attempts; i++) {
+    const rng = makeRng(baseSeed + i * 2654435761)
+    const days = attemptSchedule(allDates, holidays, activeGuards, posts, targets, options.carryOver, rng)
+
+    if (!days) {
+      // 當次 attempt 卡住（某天無合法候選）— 記為「最差」以便 fallback
+      if (!best) {
+        best = {
+          days: [],
+          hardViolations: 1,
+          hoursSpread: Infinity,
+          postExcessSum: Infinity,
+          postSpreadSum: Infinity,
+        }
+      }
+      continue
+    }
+
+    const evalResult = evaluateAttempt(days, posts, activeGuards)
+    if (!best || isBetter(evalResult, best)) best = evalResult
+
+    // 完美解：硬違規 0、兩個軟目標都達標 → 提前結束
+    if (
+      best.hardViolations === 0 &&
+      best.hoursSpread <= 12 &&
+      best.postExcessSum === 0
+    ) break
+  }
+
+  if (!best || best.days.length === 0) {
+    // 所有 attempts 都失敗（該月份硬約束無可行解）
+    // 回傳空排班，讓上層 UI / validator 明確告知使用者
+    return { year, month, days: [], updatedAt: new Date().toISOString() }
+  }
+
+  return { year, month, days: best.days, updatedAt: new Date().toISOString() }
 }
 
-function generateScheduleOnce(
-  year: number,
-  month: number,
-  guards: Guard[],
-  posts: Post[],
-  holidays: string[]
-): MonthSchedule {
-  const activeGuards = shuffle(guards.filter((g) => g.active))
-  const N = activeGuards.length
-  const allDates = getDaysInMonth(year, month)
-  const days: DaySchedule[] = []
+// ─── 從上個月排班建立 carryOver（跨月銜接用） ───────────────────────────────
 
-  if (N === 0) return { year, month, days, updatedAt: new Date().toISOString() }
-
-  // Phase 1
-  const targets = calcTargetCounts(allDates, holidays, posts, activeGuards)
-  const remaining: Record<string, Record<PostId, number>> = {}
-  for (const g of activeGuards) remaining[g.id] = { ...targets[g.id] }
-
-  // 預先算好每人的目標時數，供 Phase 2 做時數偏差修正
-  const targetHours: Record<string, number> = {}
-  for (const g of activeGuards) {
-    targetHours[g.id] = posts.reduce((s, p) => s + targets[g.id][p.id] * p.hours, 0)
+export function buildCarryOver(prev: MonthSchedule): MonthContext {
+  const ctx: MonthContext = {
+    consecutive: {},
+    lastPost: {},
+    lastHolidayDow: {},
+    lastHolidayPost: {},
   }
 
-  const weekdayPosts = posts.filter((p) => p.type === 'weekday').map((p) => p.id) as PostId[]
-  const holidayPosts = posts.filter((p) => p.type === 'holiday').map((p) => p.id) as PostId[]
-  const totalWeekdays = allDates.filter((d) => !holidays.includes(d) && !isWeekend(d)).length
-  const totalHolidays = allDates.filter((d) => holidays.includes(d) || isWeekend(d)).length
+  const guardIds = new Set<string>()
+  for (const d of prev.days) for (const a of d.assignments) guardIds.add(a.guardId)
 
-  // Phase 2
-  for (const date of allDates) {
-    const isHoliday = holidays.includes(date) || isWeekend(date)
-    const day: DaySchedule = { date, isHoliday, isTyphoon: false, assignments: [] }
-    const requiredPosts = isHoliday ? holidayPosts : weekdayPosts
-    const assigned = new Set<string>()
-
-    const mustRestIds = new Set(
-      activeGuards
-        .filter((g) => countConsecutiveWorkDays(g.id, date, days) >= 6)
-        .map((g) => g.id)
-    )
-    const eligible = activeGuards.filter((g) => !mustRestIds.has(g.id))
-
-    const typeTotal = isHoliday ? totalHolidays : totalWeekdays
-    const typeRemaining = isHoliday
-      ? allDates.filter((d) => d >= date && (holidays.includes(d) || isWeekend(d))).length
-      : allDates.filter((d) => d >= date && !holidays.includes(d) && !isWeekend(d)).length
-
-    const urgency = (g: Guard, p: PostId): number => {
-      const exp = typeTotal > 0 ? targets[g.id][p] * (typeRemaining / typeTotal) : 0
-      return remaining[g.id][p] - exp
+  for (const id of guardIds) {
+    // 連續天數 = 從最後一天往前數，直到遇到休假
+    let consec = 0
+    for (let i = prev.days.length - 1; i >= 0; i--) {
+      const a = prev.days[i].assignments.find((x) => x.guardId === id)
+      if (a?.postId) consec++
+      else break
     }
+    ctx.consecutive[id] = consec
 
-    // 整體班次虧欠：該衛兵所有哨點緊迫度加總（衡量「今天是否該輪到我上班」）
-    const assignmentDeficit = (g: Guard): number =>
-      requiredPosts.reduce((s, p) => s + urgency(g, p), 0)
-
-    const passesRules = (g: Guard, p: PostId): boolean =>
-      getYesterdayPost(g.id, date, days) !== p &&
-      (!isHoliday || isHolidayAssignmentValid(g.id, date, p, days))
-
-    // 評分：哨點緊迫度（主）+ 整體班次虧欠（防止連續被擠掉）+ 規則懲罰 + 時數偏差修正
-    // 時數偏差修正權重 2.0：保證 Phase 1 目標時數差（最高 ~10h）能有效傳遞到 Phase 2
-    const score = (g: Guard, p: PostId): number =>
-      urgency(g, p) * 10 +
-      assignmentDeficit(g) * 3 +
-      (passesRules(g, p) ? 0 : -100) -
-      (computeCurrentHours(g.id, days, posts) - targetHours[g.id]) * 2.0
-
-    // 回溯找最佳完整指派
-    const bestAssignment = findOptimalDayAssignment(requiredPosts, eligible, score)
-
-    for (const { guardId, postId } of bestAssignment) {
-      assigned.add(guardId)
-      remaining[guardId][postId] = Math.max(0, remaining[guardId][postId] - 1)
-      day.assignments.push({ guardId, postId })
+    // 最後一次上班的哨點
+    let lastPost: PostId | null = null
+    for (let i = prev.days.length - 1; i >= 0; i--) {
+      const a = prev.days[i].assignments.find((x) => x.guardId === id)
+      if (a?.postId) { lastPost = a.postId; break }
     }
-    for (const g of activeGuards) {
-      if (!assigned.has(g.id)) day.assignments.push({ guardId: g.id, postId: null })
-    }
+    ctx.lastPost[id] = lastPost
 
-    days.push(day)
+    // 最後一次假日 F/G
+    let holDow: number | null = null
+    let holPost: PostId | null = null
+    for (let i = prev.days.length - 1; i >= 0; i--) {
+      const d = prev.days[i]
+      if (!d.isHoliday) continue
+      const a = d.assignments.find((x) => x.guardId === id)
+      if (a?.postId && (a.postId === 'F' || a.postId === 'G')) {
+        holDow = dayOfWeek(d.date)
+        holPost = a.postId
+        break
+      }
+    }
+    ctx.lastHolidayDow[id] = holDow
+    ctx.lastHolidayPost[id] = holPost
   }
 
-  return { year, month, days, updatedAt: new Date().toISOString() }
+  return ctx
 }
 
 // ─── 颱風假 ───────────────────────────────────────────────────────────────────

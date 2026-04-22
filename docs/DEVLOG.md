@@ -91,6 +91,53 @@ score = urgency × 10 + 班次虧欠 × 3 + 規則懲罰 - 時數偏差 × 2.0
 
 **關鍵洞察**：Phase 1 算出來的目標時數差最多只有 10h，修正項要有足夠的影響力才能傳遞到 Phase 2。權重 0.5 時修正力只有 5 分，被 urgency 的 10 分輕易覆蓋。
 
+### v4：完整重寫為 CSP Backtracking（對齊 Python 版本品質）
+
+起因：使用者用 Codex 根據規格生了一個 Python 版本（`guard-scheduler-sideproject/`），拿來對比發現 Python 版本的排班品質更好——硬違規 0，軟目標幾乎全部月份達標。分析根本差異後，完整重寫排班演算法。
+
+**架構重新設計**
+
+從「逐日最優貪婪」改為「隨機重啟 + 日內 CSP 回溯」：
+
+```
+generateSchedule(月份) {
+  Phase 1：calcTargetCounts — 預算配額（逐哨點順序 + 時數排序分配餘數）
+  Phase 2：for (1000 次 attempts) {
+    attemptSchedule — 逐日用 CSP backtracking 排班
+    evaluateAttempt — 計算品質向量
+    if (isBetter) 更新最佳解
+    if (完美解) 提前結束
+  }
+}
+```
+
+**五個關鍵修正（與 Python 版本對齊）**
+
+1. **時數均衡權重**：`hourGap` 係數 0.1 → 0.8（Python 就是 0.8）
+2. **動態 most-constrained-first**：每層遞迴重算各哨點的剩餘候選數，每次先排最緊縮的哨點（對齊 Python 的 `choose_next_post`）
+3. **配額 deficit 允許負值**：超過配額者 deficit 變負數 = 扣分，防止壟斷
+4. **extras 逐哨點依序分配**：Phase 1 對每個哨點單獨排序並分配餘數，每次都根據「當下累積預估時數」排序（對齊 Python 的 `_build_targets`）
+5. **目標函數**：用 `postExcessSum`（∑ max(0, spread-1)）取代 `postSpreadMax`，對齊 Python 的四層字典序目標：`(hours_excess, post_excess, hours_spread, post_sum)`
+
+**benchmark 結果（2026 全年，seed=12345，1000 attempts）**
+
+| 月份 | 硬違規 | 時數區間 | ≤12h | 哨點 max | ≤1 |
+|------|--------|----------|------|----------|----|
+| 全部 12 個月 | **0** | 4h~12h | ✓ 12/12 | 1 | ✓ 12/12 |
+
+**UI 新增：規則實際數據**
+
+規則檢查區塊每條規則下方顯示本月實際統計：
+- 本月最長連續上班 N 天
+- 連續同哨點 N 次，共檢查 M 組相鄰上班日
+- 假日星期/哨點未交替 N 次，共檢查 M 次
+- 工時差距 N 小時（最高 X、最低 Y）
+- 最大哨點分配差距 N 班
+
+**預設 attempts 從 100 → 1000**
+
+原因：100 次在困難月份（如 2026-06 端午跨週五）有 60% 機率卡在局部最優，1000 次降至約 5%，且每次執行約 40~200ms，UI 仍即時響應。
+
 ---
 
 ## 第四階段：UI 設計

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { MonthSchedule, Guard, Post, PostId } from '../types'
 import { getGuards, getPosts, getCalendar, getSchedule, saveSchedule } from '../store'
 import { generateSchedule, applyTyphoonDay } from '../lib/scheduler'
-import { validateSchedule, calcMonthlyHours, calcPostCounts, RULES, type Violation } from '../lib/validator'
+import { validateSchedule, calcMonthlyHours, calcPostCounts, calcRuleStats, RULES, type Violation, type RuleStats } from '../lib/validator'
 
 const DOW = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -296,6 +296,27 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
   const activeGuards = guards.filter(g => g.active)
   const days = getDaysInMonth(year, month)
   const violations: Violation[] = schedule ? validateSchedule(schedule, posts, activeGuards.map(g => g.id)) : []
+  const ruleStats: RuleStats | null = schedule ? calcRuleStats(schedule, posts, activeGuards.map(g => g.id)) : null
+
+  function ruleStatLine(type: Violation['type']): string | null {
+    if (!ruleStats) return null
+    switch (type) {
+      case 'consecutive_days':
+        return `本月最長連續上班 ${ruleStats.consecutiveDaysMax} 天`
+      case 'consecutive_post':
+        return `連續同哨點 ${ruleStats.consecutivePostViolations} 次，共檢查 ${ruleStats.consecutivePostChecks} 組相鄰上班日`
+      case 'holiday_day_alternation':
+        return `假日星期未交替 ${ruleStats.holidayDayAlternationViolations} 次，共檢查 ${ruleStats.holidayDayAlternationChecks} 次假日銜接`
+      case 'holiday_post_alternation':
+        return `假日哨點未交替 ${ruleStats.holidayPostAlternationViolations} 次，共檢查 ${ruleStats.holidayPostAlternationChecks} 次假日銜接`
+      case 'hours_imbalance':
+        return `工時差距 ${ruleStats.hoursSpread} 小時（最高 ${ruleStats.hoursMax}、最低 ${ruleStats.hoursMin}）`
+      case 'post_imbalance':
+        return `最大哨點分配差距 ${ruleStats.postMaxSpread} 班`
+      default:
+        return null
+    }
+  }
 
   // 每人本月時數 & 極值（供 sticky 欄色標）
   const guardMonthlyHours = schedule
@@ -822,17 +843,23 @@ export default function SchedulePage({ initialYear, initialMonth }: Props) {
               {RULES.map(({ type, label }) => {
                 const matched = violations.filter(v => v.type === type)
                 const pass = matched.length === 0
+                const statLine = ruleStatLine(type)
                 return (
                   <li key={type}>
-                    <div className="flex items-center justify-between px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm ${pass ? 'text-green-500' : 'text-red-500'}`}>
+                    <div className="flex items-start justify-between px-4 py-3 gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <span className={`text-sm leading-5 ${pass ? 'text-green-500' : 'text-red-500'}`}>
                           {pass ? '✓' : '✗'}
                         </span>
-                        <span className="text-sm text-gray-700">{label}</span>
+                        <div className="min-w-0">
+                          <span className="text-sm text-gray-700">{label}</span>
+                          {statLine && (
+                            <p className="text-xs text-gray-400 mt-0.5">{statLine}</p>
+                          )}
+                        </div>
                       </div>
                       {!pass && (
-                        <span className="text-sm font-semibold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">
+                        <span className="flex-shrink-0 text-sm font-semibold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">
                           {matched.length} 筆
                         </span>
                       )}

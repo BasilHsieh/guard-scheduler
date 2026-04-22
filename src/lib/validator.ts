@@ -144,6 +144,99 @@ export function validateSchedule(schedule: MonthSchedule, posts: Post[], guardId
   return violations
 }
 
+export interface RuleStats {
+  consecutiveDaysMax: number
+  consecutivePostViolations: number
+  consecutivePostChecks: number
+  holidayDayAlternationViolations: number
+  holidayDayAlternationChecks: number
+  holidayPostAlternationViolations: number
+  holidayPostAlternationChecks: number
+  hoursMax: number
+  hoursMin: number
+  hoursSpread: number
+  postMaxSpread: number
+}
+
+export function calcRuleStats(schedule: MonthSchedule, posts: Post[], guardIds: string[]): RuleStats {
+  const days = schedule.days
+
+  let consecutiveDaysMax = 0
+  let consecutivePostViolations = 0
+  let consecutivePostChecks = 0
+  let holidayDayAlternationViolations = 0
+  let holidayDayAlternationChecks = 0
+  let holidayPostAlternationViolations = 0
+  let holidayPostAlternationChecks = 0
+
+  for (const guardId of guardIds) {
+    let streak = 0
+    let lastHolidayFGDow: number | null = null
+    let lastHolidayFGPost: PostId | null = null
+
+    for (let i = 0; i < days.length; i++) {
+      const day = days[i]
+      const a = day.assignments.find((x) => x.guardId === guardId)
+      const postId = a?.postId ?? null
+
+      if (postId) {
+        streak++
+        if (streak > consecutiveDaysMax) consecutiveDaysMax = streak
+
+        if (i > 0) {
+          const prev = days[i - 1].assignments.find((x) => x.guardId === guardId)
+          if (prev?.postId) {
+            consecutivePostChecks++
+            if (prev.postId === postId) consecutivePostViolations++
+          }
+        }
+
+        if (isHolidayDay(day.date, schedule) && (postId === 'F' || postId === 'G')) {
+          if (lastHolidayFGDow !== null && lastHolidayFGPost !== null) {
+            const dow = new Date(day.date).getDay()
+            holidayDayAlternationChecks++
+            if (lastHolidayFGDow === dow) holidayDayAlternationViolations++
+            holidayPostAlternationChecks++
+            if (lastHolidayFGPost === postId) holidayPostAlternationViolations++
+          }
+          lastHolidayFGDow = new Date(day.date).getDay()
+          lastHolidayFGPost = postId
+        }
+      } else {
+        streak = 0
+      }
+    }
+  }
+
+  const hoursArr = guardIds.map((id) => calcMonthlyHours(id, schedule, posts))
+  const hoursMax = hoursArr.length ? Math.max(...hoursArr) : 0
+  const hoursMin = hoursArr.length ? Math.min(...hoursArr) : 0
+  const hoursSpread = hoursMax - hoursMin
+
+  const postIds: PostId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+  let postMaxSpread = 0
+  for (const p of postIds) {
+    const cs = guardIds.map((id) => calcPostCounts(id, schedule)[p])
+    if (!cs.length) continue
+    const spread = Math.max(...cs) - Math.min(...cs)
+    if (spread > postMaxSpread) postMaxSpread = spread
+  }
+
+  return {
+    consecutiveDaysMax,
+    consecutivePostViolations,
+    consecutivePostChecks,
+    holidayDayAlternationViolations,
+    holidayDayAlternationChecks,
+    holidayPostAlternationViolations,
+    holidayPostAlternationChecks,
+    hoursMax,
+    hoursMin,
+    hoursSpread,
+    postMaxSpread,
+  }
+}
+
 export function calcPostCounts(guardId: string, schedule: MonthSchedule): Record<PostId, number> {
   const counts: Record<PostId, number> = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 }
   for (const day of schedule.days) {
