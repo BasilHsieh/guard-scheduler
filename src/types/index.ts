@@ -46,3 +46,20 @@ export interface ScheduleIndex {
   month: number
   updatedAt: string
 }
+
+/**
+ * 調班單：一次「A 某日借班、B 代班、另一日還班」的完整紀錄。
+ * 以此為單位追溯排班變動；受影響區間（借班日 → 月底）會被重新求解。
+ */
+export interface SwapRequest {
+  id: string
+  year: number
+  month: number
+  appliedAt: string      // ISO timestamp
+  borrowDate: string     // 借班日 'YYYY-MM-DD'（A 請假的日子）
+  borrowerId: string     // 原值班人（A）
+  borrowPostId: PostId   // 借的哨點
+  substituteId: string   // 代班人（B）
+  paybackDate: string    // 還班日 'YYYY-MM-DD'（B 改休、A 上班）
+  paybackPostId: PostId  // 還的哨點（B 原本那天值的哨點）
+}

@@ -29,7 +29,15 @@ interface AttemptResult {
   hoursSpread: number
   postExcessSum: number    // ∑ max(0, spread - 1) across all posts（門檻超額加總）
   postSpreadSum: number    // ∑ spread（絕對哨點差加總，tiebreak 用）
+  diffCount: number        // 跟 baseline 不同的格子數（調班最小改動目標）
 }
+
+/**
+ * 鎖定格子：用於調班場景。
+ * 結構：date → guardId → postId（上班）或 null（休息）
+ * 被鎖定的格子在求解時不會被更動，直接套用指定值。
+ */
+export type LockedCells = Record<string, Record<string, PostId | null>>
 
 // ─── 日期工具 ────────────────────────────────────────────────────────────────
 
@@ -62,7 +70,8 @@ function makeRng(seed: number): () => number {
   }
 }
 
-function shuffle<T>(arr: T[], rng: () => number): T[] {
+// shuffle 目前未使用（保留供未來擴充），以底線前綴避免 noUnusedLocals
+function _shuffle<T>(arr: T[], rng: () => number): T[] {
   const a = [...arr]
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1))
@@ -70,6 +79,7 @@ function shuffle<T>(arr: T[], rng: () => number): T[] {
   }
   return a
 }
+void _shuffle
 
 // ─── Phase 1：配額計算 ───────────────────────────────────────────────────────
 //
@@ -215,10 +225,27 @@ function solveDay(
   state: RuntimeState,
   targets: Record<string, Record<PostId, number>>,
   avgHours: number,
-  rng: () => number
+  rng: () => number,
+  locks?: Record<string, PostId | null>
 ): DayResult | null {
   const used = new Set<string>()
   const chosen: { guardId: string; postId: PostId }[] = []
+
+  // 套用當日鎖定格子（調班場景）：
+  //   guardId → postId    代表該人當天固定上此哨點
+  //   guardId → null      代表該人當天固定休息
+  // 被鎖定者不參與後續 backtracking
+  const forcedPosts = new Set<PostId>()
+  if (locks) {
+    for (const [guardId, postId] of Object.entries(locks)) {
+      used.add(guardId)
+      if (postId !== null) {
+        chosen.push({ guardId, postId })
+        forcedPosts.add(postId)
+      }
+    }
+  }
+  const openPosts = requiredPosts.filter((p) => !forcedPosts.has(p))
 
   // 動態 most-constrained-first：每層遞迴時重新計算各哨點的剩餘候選人，
   // 挑候選最少的先排（對齊 Python solver.choose_next_post）
@@ -255,7 +282,7 @@ function solveDay(
     return false
   }
 
-  if (!bt([...requiredPosts])) return null
+  if (!bt(openPosts)) return null
   return { assignments: chosen }
 }
 
@@ -308,7 +335,8 @@ function attemptSchedule(
   posts: Post[],
   targets: Record<string, Record<PostId, number>>,
   carryOver: MonthContext | undefined,
-  rng: () => number
+  rng: () => number,
+  lockedCells?: LockedCells
 ): DaySchedule[] | null {
   const state = initState(activeGuards, targets, carryOver)
   const weekdayPostIds = posts.filter((p) => p.type === 'weekday').map((p) => p.id) as PostId[]
@@ -328,7 +356,8 @@ function attemptSchedule(
   for (const date of allDates) {
     const isHoliday = holidays.includes(date) || isWeekend(date)
     const required = isHoliday ? holidayPostIds : weekdayPostIds
-    const result = solveDay(date, isHoliday, required, activeGuards, state, targets, avgHoursTarget, rng)
+    const locks = lockedCells?.[date]
+    const result = solveDay(date, isHoliday, required, activeGuards, state, targets, avgHoursTarget, rng, locks)
     if (!result) return null
     days.push(applyDay(date, isHoliday, result, activeGuards, state, posts))
   }
@@ -337,7 +366,12 @@ function attemptSchedule(
 
 // ─── 統計與品質比較 ──────────────────────────────────────────────────────────
 
-function evaluateAttempt(days: DaySchedule[], posts: Post[], guards: Guard[]): AttemptResult {
+function evaluateAttempt(
+  days: DaySchedule[],
+  posts: Post[],
+  guards: Guard[],
+  baseline?: MonthSchedule
+): AttemptResult {
   const hours: Record<string, number> = {}
   const counts: Record<string, Record<PostId, number>> = {}
   for (const g of guards) {
@@ -366,17 +400,38 @@ function evaluateAttempt(days: DaySchedule[], posts: Post[], guards: Guard[]): A
     postExcessSum += Math.max(0, spread - 1)
   }
 
-  return { days, hardViolations: 0, hoursSpread, postExcessSum, postSpreadSum }
+  // diffCount：跟 baseline（調班前舊排班）比，有多少個 (date, guardId) 的 postId 不同
+  // 只在調班場景會傳 baseline；一般新排班用預設值 0
+  let diffCount = 0
+  if (baseline) {
+    const baselineMap = new Map<string, Map<string, PostId | null>>()
+    for (const d of baseline.days) {
+      const m = new Map<string, PostId | null>()
+      for (const a of d.assignments) m.set(a.guardId, a.postId)
+      baselineMap.set(d.date, m)
+    }
+    for (const d of days) {
+      const bm = baselineMap.get(d.date)
+      if (!bm) continue
+      for (const a of d.assignments) {
+        if (bm.get(a.guardId) !== a.postId) diffCount++
+      }
+    }
+  }
+
+  return { days, hardViolations: 0, hoursSpread, postExcessSum, postSpreadSum, diffCount }
 }
 
 // 字典序比較（對齊 Python solver._objective）：
-//   硬違規 → 時數門檻超額 → 哨點門檻超額加總 → 絕對時數差 → 絕對哨點差加總
+//   硬違規 → 時數門檻超額 → 哨點門檻超額加總 → 跟 baseline 差異數 → 絕對時數差 → 絕對哨點差加總
+// diffCount 只在調班場景有意義（一般新排班所有 attempts 都是 0，不會影響）
 function isBetter(a: AttemptResult, b: AttemptResult): boolean {
   if (a.hardViolations !== b.hardViolations) return a.hardViolations < b.hardViolations
   const aHourExcess = Math.max(0, a.hoursSpread - 12)
   const bHourExcess = Math.max(0, b.hoursSpread - 12)
   if (aHourExcess !== bHourExcess) return aHourExcess < bHourExcess
   if (a.postExcessSum !== b.postExcessSum) return a.postExcessSum < b.postExcessSum
+  if (a.diffCount !== b.diffCount) return a.diffCount < b.diffCount
   if (a.hoursSpread !== b.hoursSpread) return a.hoursSpread < b.hoursSpread
   return a.postSpreadSum < b.postSpreadSum
 }
@@ -387,6 +442,16 @@ export interface GenerateOptions {
   carryOver?: MonthContext
   attempts?: number
   seed?: number
+  /**
+   * 鎖定格子：調班場景把「借班日 A=休 / B=上此哨、還班日 B=休 / A=上此哨」鎖住，
+   * 其他日子自由重排。求解時被鎖的 cell 不會動。
+   */
+  lockedCells?: LockedCells
+  /**
+   * 基準排班：調班場景傳入「調班前的舊排班」，求解時會把與它的差異當成
+   * 字典序比較中的一項軟目標（越少越好），達到「最小改動」的效果。
+   */
+  baseline?: MonthSchedule
 }
 
 export function generateSchedule(
@@ -413,7 +478,9 @@ export function generateSchedule(
 
   for (let i = 0; i < attempts; i++) {
     const rng = makeRng(baseSeed + i * 2654435761)
-    const days = attemptSchedule(allDates, holidays, activeGuards, posts, targets, options.carryOver, rng)
+    const days = attemptSchedule(
+      allDates, holidays, activeGuards, posts, targets, options.carryOver, rng, options.lockedCells
+    )
 
     if (!days) {
       // 當次 attempt 卡住（某天無合法候選）— 記為「最差」以便 fallback
@@ -424,16 +491,20 @@ export function generateSchedule(
           hoursSpread: Infinity,
           postExcessSum: Infinity,
           postSpreadSum: Infinity,
+          diffCount: Infinity,
         }
       }
       continue
     }
 
-    const evalResult = evaluateAttempt(days, posts, activeGuards)
+    const evalResult = evaluateAttempt(days, posts, activeGuards, options.baseline)
     if (!best || isBetter(evalResult, best)) best = evalResult
 
-    // 完美解：硬違規 0、兩個軟目標都達標 → 提前結束
+    // 完美解提前結束：
+    //   一般排班（無 baseline）— 硬違規 0、時數達標、哨點門檻達標即可
+    //   調班場景（有 baseline）— 還需要等到 diff 無法再壓（保守起見，不 early exit）
     if (
+      !options.baseline &&
       best.hardViolations === 0 &&
       best.hoursSpread <= 12 &&
       best.postExcessSum === 0

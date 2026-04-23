@@ -1,4 +1,4 @@
-import type { Guard, Post, PostId, CalendarData, MonthSchedule, ScheduleIndex } from '../types'
+import type { Guard, Post, PostId, CalendarData, MonthSchedule, ScheduleIndex, SwapRequest } from '../types'
 
 const KEYS = {
   guards: 'guards',
@@ -6,6 +6,7 @@ const KEYS = {
   calendarYear: (year: number) => `calendar_${year}`,
   schedule: (year: number, month: number) => `schedule_${year}_${month}`,
   schedulesIndex: 'schedules_index',
+  swapRequests: (year: number, month: number) => `swap_requests_${year}_${month}`,
 }
 
 function get<T>(key: string): T | null {
@@ -121,4 +122,19 @@ export function importBackup(json: string): void {
 
 export function getPostById(id: PostId): Post | undefined {
   return getPosts().find((p) => p.id === id)
+}
+
+// Swap Requests（調班單）
+export function getSwapRequests(year: number, month: number): SwapRequest[] {
+  return get<SwapRequest[]>(KEYS.swapRequests(year, month)) ?? []
+}
+
+export function saveSwapRequests(year: number, month: number, reqs: SwapRequest[]): void {
+  set(KEYS.swapRequests(year, month), reqs)
+}
+
+export function appendSwapRequest(req: SwapRequest): void {
+  const existing = getSwapRequests(req.year, req.month)
+  existing.push(req)
+  saveSwapRequests(req.year, req.month, existing)
 }

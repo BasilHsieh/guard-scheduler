@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import type { Page } from './Layout'
+import { isTestModeActive, getDevTestState } from '../lib/clock'
+import DevSettings from './DevSettings'
 
 interface NavItem {
   id: Page
@@ -30,8 +33,12 @@ interface Props {
 }
 
 export default function Sidebar({ current, onNavigate }: Props) {
+  const [devOpen, setDevOpen] = useState(false)
+  const testActive = isTestModeActive()
+  const devState = getDevTestState()
+
   return (
-    <aside className="w-56 shrink-0 bg-slate-900 flex flex-col py-6 px-4">
+    <aside className="w-56 shrink-0 bg-slate-900 flex flex-col py-6 px-4 relative">
       {/* 品牌 */}
       <div className="px-2 mb-8">
         <div className="flex items-center gap-2">
@@ -68,6 +75,31 @@ export default function Sidebar({ current, onNavigate }: Props) {
           </div>
         ))}
       </nav>
+
+      {/* 開發者設定按鈕（sidebar 底部） */}
+      <div className="relative mt-4 pt-4 border-t border-slate-800">
+        <button
+          onClick={() => setDevOpen((v) => !v)}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left transition-all ${
+            devOpen
+              ? 'bg-slate-800 text-white'
+              : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+          }`}
+        >
+          <span className="text-base leading-none">⚙️</span>
+          <span className="flex-1">開發者</span>
+          {testActive && (
+            <span
+              className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500 text-white"
+              title={`測試模式已開啟：${devState.today}`}
+            >
+              測試中
+            </span>
+          )}
+        </button>
+
+        <DevSettings open={devOpen} onClose={() => setDevOpen(false)} />
+      </div>
     </aside>
   )
 }
