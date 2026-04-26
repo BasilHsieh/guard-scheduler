@@ -14,18 +14,18 @@
 
 |  |  |
 |---|---|
-| **User** | A family member of mine, a senior security supervisor |
+| **User** | A senior security supervisor |
 | **Pain** | 1–2 hrs/month spent manually scheduling in Excel, 6 rules to juggle, full re-do whenever someone takes leave |
 | **Investment** | 30-min interview + 6 hrs of development (1h planning / 3h UI / 2h implementation) |
 | **Output** | Auto-scheduling, rule validation, swap wizard, typhoon-day handling, Taiwan holiday API |
 | **Quality** | Full-year 2026 benchmark across 12 months: hard violations **0/12**, hour spread ≤12h **12/12** |
-| **Feedback** | *"It works. I no longer have to think about scheduling — I just review before sending it out."* |
+| **Feedback** | *"Used to give me a headache doing it by hand. Now the schedule just shows up — I look it over to make sure nothing's off, then send it out. Much easier."* |
 
 ---
 
 ## 1. The Problem
 
-A family member of mine is a senior security supervisor who spends **1–2 hours every month** building next month's roster in Excel. The schedule has to satisfy 6 rules (max consecutive workdays, post rotation, weekend alternation, hour balance, ...), all easy to get wrong by hand. Worse: any mid-month leave request can force a re-do of the entire second half of the month.
+The user is a senior security supervisor who spends **1–2 hours every month** building next month's roster in Excel. The schedule has to satisfy 6 rules (max consecutive workdays, post rotation, weekend alternation, hour balance, ...), all easy to get wrong by hand. Worse: any mid-month leave request can force a re-do of the entire second half of the month.
 
 This is a textbook automation candidate: **high-frequency × well-defined rules × repetitive labor**.
 
@@ -58,15 +58,16 @@ I sat down with the user for 30 minutes and pinned down:
 
 Only one user. No accounts, no collaboration, no cloud sync needed. Cutting the backend is what made it possible to ship in 6 hours instead of 6 hours of auth plumbing. **Scope control is PM work.**
 
-### b. Wrote a custom CSP backtracker instead of using an off-the-shelf LP solver
+### b. Wrote a custom scheduling algorithm instead of using an off-the-shelf solver
 
-Scheduling is a textbook constraint satisfaction problem and mature solvers exist. I chose to write my own because:
+Two reasons to write it from scratch:
 
-- **Explainability**: When the schedule violates something, I need to point at "rule #N" specifically. Black-box solvers don't do this well.
-- **Custom rules**: Some of the 6 rules are soft constraints (e.g. hour spread ≤12h). General-purpose solvers don't always model these naturally.
-- **Performance was never the bottleneck**: At 6 people × 30 days, random-restart backtracking solves in 50–200ms.
+- **The rules are fairly custom**: The 6 rules involve weekday/weekend differences and a mix of hard and soft constraints (e.g. "monthly hour spread > 12h is a violation") — off-the-shelf libraries don't always model this cleanly.
+- **I wanted to test "vibe coding"**: This side project was also an experiment for me — can a PM, working with AI, build a tool that handles real business logic from scratch? Writing the algorithm myself was a good way to push that hypothesis to its limit.
 
-Validated: 12-month benchmark — 0 hard violations, 100% pass on soft constraints.
+How the decision was made: AI laid out the options (off-the-shelf solver / custom backtracking / linear programming), explained the trade-offs of each, and I made the call based on the two reasons above.
+
+Validated: full-year 2026 benchmark — 0/12 hard violations, 100% pass on soft constraints, 50–200ms per run.
 
 ### c. Swaps are "minimal-edit", not "re-run the whole month"
 
@@ -82,14 +83,14 @@ So I modeled swaps as a **constrained problem**: lock all shifts before the borr
 
 - **Defined acceptance criteria**: 12-month benchmark + 27 unit tests. If AI output doesn't pass the benchmark, redo. **Don't let AI grade itself.**
 - **Decomposed tasks**: Every prompt was sized to "one commit" (30–60 min, independently verifiable)
-- **Made the trade-offs**: The 3 decisions above are PM work — AI won't make them for you
+- **Made the technical decisions**: AI lays out the options and explains the trade-offs; I choose based on product context. All 3 decisions above followed this pattern — e.g. for "custom algorithm vs off-the-shelf solver," AI surfaced the pros and cons of each, I made the call
 - **Designed the UX**: Design tokens, interaction flow, copy tone — all PM perspective
 
 ## 5. Outcome
 
 - **Live**: [basil-guard-scheduler.vercel.app](https://basil-guard-scheduler.vercel.app)
 - **Algorithm quality**: Full-year 2026 benchmark, 0/12 hard violations, 12/12 hour spread ≤12h
-- **User feedback**: *"It works. I no longer have to think about scheduling — I just review before sending it out."*
+- **User feedback**: *"Used to give me a headache doing it by hand. Now the schedule just shows up — I look it over to make sure nothing's off, then send it out. Much easier."*
 - **Codebase**: ~5,500 lines of TypeScript / 31 components / 27 unit tests
 
 ## 6. What I Learned
