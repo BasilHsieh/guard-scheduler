@@ -6,7 +6,7 @@
 
 **Language**: 中文（本頁） · [English](./README.en.md)
 
-🔗 **[Live Demo](https://basil-guard-scheduler.vercel.app)** · [GitHub](https://github.com/) <!-- TODO: 補 GitHub repo 連結 -->
+🔗 **[Live Demo](https://basil-guard-scheduler.vercel.app)**
 
 ![Hero screenshot](./docs/hero-matrix.png)
 

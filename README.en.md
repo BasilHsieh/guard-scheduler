@@ -4,7 +4,7 @@
 
 **Language**: English (this page) · [中文](./README.md)
 
-🔗 **[Live Demo](https://basil-guard-scheduler.vercel.app)** · [GitHub](https://github.com/) <!-- TODO: add GitHub repo link -->
+🔗 **[Live Demo](https://basil-guard-scheduler.vercel.app)**
 
 ![Hero screenshot](./docs/hero-matrix.png)
 
