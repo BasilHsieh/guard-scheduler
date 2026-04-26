@@ -52,7 +52,7 @@ I sat down with the user for 30 minutes and pinned down:
 >
 > In other words, this side project served two purposes for me: **a scheduling tool for the user, and an AI-collaboration sandbox for myself**.
 
-## 3. Three Key PM Decisions
+## 3. Four Key PM Decisions
 
 ### a. Pure frontend + localStorage, no backend
 
@@ -77,13 +77,24 @@ So I modeled swaps as a **constrained problem**: lock all shifts before the borr
 
 ![Swap drawer](./docs/swap-drawer.png)
 
+### d. Matrix + Calendar dual views — refusing to pick one
+
+The same scheduling data has two natural reading patterns:
+
+- **Supervisor's view**: "Are everyone's hours balanced this month? Who's covering what?" → matrix (people × days, full overview)
+- **Guard's view**: "Which days am I working this week? At which post?" → calendar (week-by-week, intuitive)
+
+Matrix-only would frustrate the on-the-ground guards; calendar-only would slow down the supervisor's review. **Both are needed.**
+
+The cost: ~1.5 extra hours of development and two views to keep in sync. But missing either one means the user thinks "I'd rather just go back to Excel" — and the whole tool loses its point.
+
 ## 4. The AI Collaboration Method
 
 9 years as a PM. Almost all the code in this project was produced by Claude. My role was: **defining the problem, designing the acceptance criteria, making technical decisions, and judging trade-offs**. AI flattens the implementation barrier, but not the judgment one. What I actually did:
 
 - **Defined acceptance criteria**: 12-month benchmark + 27 unit tests. If AI output doesn't pass the benchmark, redo. **Don't let AI grade itself.**
 - **Decomposed tasks**: Every prompt was sized to "one commit" (30–60 min, independently verifiable)
-- **Made the technical decisions**: AI lays out the options and explains the trade-offs; I choose based on product context. All 3 decisions above followed this pattern — e.g. for "custom algorithm vs off-the-shelf solver," AI surfaced the pros and cons of each, I made the call
+- **Made the technical decisions**: AI lays out the options and explains the trade-offs; I choose based on product context. All 4 decisions above followed this pattern — e.g. for "custom algorithm vs off-the-shelf solver," AI surfaced the pros and cons of each, I made the call
 - **Designed the UX**: Design tokens, interaction flow, copy tone — all PM perspective
 
 ## 5. Outcome
